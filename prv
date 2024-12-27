@@ -1,0 +1,676 @@
+local player = game.Players.LocalPlayer
+local playerGui = player.PlayerGui
+
+
+local hasPrinted = false
+
+
+local function onGuiElementVisible(guiElement)
+    
+    if guiElement.Name:lower():find("weapon") or guiElement.Name:lower():find("skins") then
+        
+        if guiElement.Visible and not hasPrinted then
+         
+
+
+        local Player = game:GetService("Players").LocalPlayer
+        local isHoldingKey = false
+        
+      
+        Player:GetMouse().KeyDown:Connect(function(Key)
+            if shared.Private['Macro']['Settings']['Enabled'] then
+                local keybind = shared.Private['Macro']['Settings']['Keybind']
+                
+                
+                if Key == keybind['Key']:lower() then
+                    if keybind['Mode'] == 'toggle' then
+                    
+                        shared.Private['Macro']['Configurations']['Enabled'] = not shared.Private['Macro']['Configurations']['Enabled']
+                    elseif keybind['Mode'] == 'hold' then
+                     
+                        isHoldingKey = true
+                        shared.Private['Macro']['Configurations']['Enabled'] = true
+                    end
+        
+                  
+                    if shared.Private['Macro']['Configurations']['Enabled'] then
+                        repeat
+                            
+                            game:GetService("RunService").Heartbeat:wait()
+                            game:GetService("VirtualInputManager"):SendMouseWheelEvent("0", "0", true, game)
+                            game:GetService("RunService").Heartbeat:wait()
+                            game:GetService("VirtualInputManager"):SendMouseWheelEvent("0", "0", false, game)
+                            game:GetService("RunService").Heartbeat:wait()
+                        until not shared.Private['Macro']['Configurations']['Enabled']
+                    end
+                end
+            end
+        end)
+        
+       
+        Player:GetMouse().KeyUp:Connect(function(Key)
+            if shared.Private['Macro']['Settings']['Keybind']['Mode'] == 'hold' and Key == shared.Private['Macro']['Settings']['Keybind']['Key']:lower() then
+                isHoldingKey = false
+                shared.Private['Macro']['Configurations']['Enabled'] = false
+            end
+        end)
+        
+
+
+
+        
+        local Players = game:GetService("Players")
+        local LocalPlayer = Players.LocalPlayer
+        local Camera = game:GetService("Workspace").CurrentCamera
+        local UserInputService = game:GetService("UserInputService")
+        local RunService = game:GetService("RunService")
+        local VirtualInputManager = game:GetService("VirtualInputManager")
+        
+        local lastClickTime = 0
+        local isToggled = false
+        local TargetPlayer = nil
+        
+        local config = shared.Private.Trigger
+        local Delay = config.Delay
+        local Key = config.Activation.Keybind
+        local TriggerEnabled = config.Enabled
+        local FOV = config.FOV
+        local Prediction = config.Prediction
+        local Mode = config.Activation.Mode
+        
+        if Delay >= 0.06 then
+            Delay = 0.001
+        elseif Delay < 0.06 then
+            if Delay < 0.0001 then
+                Delay = 0.0001
+            end
+        end
+        
+        local closeRangeHitboxSize = 0.9
+        local midRangeHitboxSize = 0.6
+        local farRangeHitboxSize = 0.3
+        
+        local AllBodyParts = {
+            "Head", "UpperTorso", "LowerTorso", "HumanoidRootPart", "LeftHand", "RightHand",
+            "LeftLowerArm", "RightLowerArm", "LeftUpperArm", "RightUpperArm", "LeftFoot",
+            "LeftLowerLeg", "LeftUpperLeg", "RightLowerLeg", "RightUpperLeg", "RightFoot"
+        }
+        
+        -- Improved Knife Detection
+        local function isUsingKnife()
+            local currentTool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
+            if currentTool then
+                local toolName = currentTool.Name:lower()
+                -- Add more knife-related tools to ignore here
+                local ignoredTools = {
+                   "knife", "[knife]", "katana", "[katana]", "[phone]", "[wallet]", "tipjar", "combat", "[LockPicker]", "[Hamburger]", "[Pizza]", "[Cranberry]", "[Chicken]", "[Taco]", "[HotDog]", "[Donut]", "[Meat]"
+                }
+                return table.find(ignoredTools, toolName) ~= nil
+            end
+            return false
+        end
+        
+        local function IsPlayerKnockedOut(player)
+            return player and player.Character and player.Character:FindFirstChild("BodyEffects") and player.Character.BodyEffects["K.O"].Value == true
+        end
+        
+        local function IsPlayerGrabbed(player)
+            return player and player.Character and player.Character:FindFirstChild("GRABBING_CONSTRAINT") ~= nil
+        end
+        
+        local function mouse1click(x, y)
+            VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, false)
+            VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, false)
+        end
+        
+        local function getMousePosition()
+            local mouse = UserInputService:GetMouseLocation()
+            return mouse.X, mouse.Y
+        end
+        
+        local function isWithinBox(position)
+            local screenPos = Camera:WorldToViewportPoint(position)
+            local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+            return (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude <= Camera.ViewportSize.X / 2
+        end
+        
+        local function isMouseOnTarget(targetPlayer)
+            local mouse = LocalPlayer:GetMouse()
+            return mouse.Target and mouse.Target:IsDescendantOf(targetPlayer.Character)
+        end
+        
+        local function getVelocity(player)
+            local humanoidRootPart = player.Character:FindFirstChild("HumanoidRootPart")
+            if humanoidRootPart then
+                local velocity = humanoidRootPart.AssemblyLinearVelocity
+                return velocity
+            end
+            return Vector3.zero
+        end
+        
+        local function predictTargetPosition(targetPlayer, deltaTime)
+            local partToPredict = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if not partToPredict then return targetPlayer.Character.HumanoidRootPart.Position end
+        
+            local velocity = getVelocity(targetPlayer)
+            local adjustedVelocity = Vector3.new(
+                velocity.X * Prediction.X,
+                velocity.Y * Prediction.Y,
+                velocity.Z * Prediction.Z
+            )
+        
+            local predictedPos = partToPredict.Position + adjustedVelocity * deltaTime
+            return predictedPos
+        end
+        
+        local function calculateHitboxSize(distance)
+            if distance <= 18 then  
+                return closeRangeHitboxSize
+            elseif distance > 18 and distance <= 30 then 
+                return midRangeHitboxSize
+            else  
+                return farRangeHitboxSize
+            end
+        end
+        
+        local function updateFOVBasedOnRange(distance)
+            if distance <= 18 then
+                return FOV.Close
+            elseif distance > 18 and distance <= 30 then
+                return FOV.Middle
+            else
+                return FOV.Far
+            end
+        end
+        
+        local function aimAtTargetBody(targetPlayer)
+            for _, bodyPartName in pairs(AllBodyParts) do
+                local bodyPart = targetPlayer.Character:FindFirstChild(bodyPartName)
+                if bodyPart and bodyPart:IsDescendantOf(targetPlayer.Character) then
+                    local targetPos = bodyPart.Position
+                    local distance = (targetPos - Camera.CFrame.Position).Magnitude
+        
+                    local currentFOV = updateFOVBasedOnRange(distance)
+                    local hitboxSize = calculateHitboxSize(distance)
+        
+                    local predictedPos = predictTargetPosition(targetPlayer, 0.1)
+        
+                    local screenPos, onScreen = Camera:WorldToViewportPoint(predictedPos)
+        
+                    if onScreen and isWithinBox(predictedPos) then
+                        local mousePos = Vector2.new(screenPos.X, screenPos.Y)
+        
+                        local jitter = Vector2.new(
+                            math.random(-hitboxSize * 2, hitboxSize * 2),
+                            math.random(-hitboxSize * 2, hitboxSize * 2)
+                        )
+                        local adjustedMousePos = mousePos + jitter
+        
+                        local currentMousePosX, currentMousePosY = getMousePosition()
+                        local moveSpeed = 0.1  
+        
+                        local newX = currentMousePosX + (adjustedMousePos.X - currentMousePosX) * moveSpeed
+                        local newY = currentMousePosY + (adjustedMousePos.Y - currentMousePosY) * moveSpeed
+        
+                        newX = math.clamp(newX, 0, Camera.ViewportSize.X)
+                        newY = math.clamp(newY, 0, Camera.ViewportSize.Y)
+        
+                        -- Make sure the knife isn't being used
+                        if os.clock() - lastClickTime >= Delay and not isUsingKnife() then
+                            lastClickTime = os.clock()
+        
+                            local mouseX, mouseY = getMousePosition()
+                            mouse1click(mouseX, mouseY)
+                        end
+                    end
+                end
+            end
+        end
+        
+        local function TriggerAction()
+            if TargetPlayer and TargetPlayer.Character then
+                local humanoid = TargetPlayer.Character:FindFirstChild("Humanoid")
+                if humanoid and humanoid.Health > 0 and not IsPlayerKnockedOut(TargetPlayer) and not IsPlayerGrabbed(TargetPlayer) then
+                    if isMouseOnTarget(TargetPlayer) then
+                        aimAtTargetBody(TargetPlayer)
+                    end
+                else
+                    TargetPlayer = nil
+                end
+            end
+        end
+        
+        UserInputService.InputBegan:Connect(function(input, gameProcessed)
+            if not gameProcessed and input.KeyCode.Name == Key then
+                if Mode == "toggle" then
+                    isToggled = not isToggled  
+                elseif Mode == "hold" then
+                    isToggled = true
+                end
+            end
+        end)
+        
+        UserInputService.InputEnded:Connect(function(input, gameProcessed)
+            if not gameProcessed and input.KeyCode.Name == Key and Mode == "hold" then
+                isToggled = false  
+            end
+        end)
+        
+        RunService.RenderStepped:Connect(function()
+            if TriggerEnabled and isToggled then  
+                TriggerAction()  
+            end
+        end)
+        
+        
+        
+        
+        
+        
+        
+        
+        local Players = game:GetService("Players")
+        local LocalPlayer = Players.LocalPlayer
+        local Mouse = LocalPlayer:GetMouse()
+        local RunService = game:GetService("RunService")
+        local Camera = game.Workspace.CurrentCamera
+        
+        local FOV = shared.Private.Camera.FOV
+        local isRightMouseButtonDown = false
+        local whitelist = shared.Private.Main.Checks.Whitelist
+        
+        local FIRST_PERSON_THRESHOLD = 5
+        local THIRD_PERSON_THRESHOLD = 10
+        local DETECTION_SCALE = 0.03
+        
+       
+        local MAX_TARGET_DISTANCE = shared.Private.Camera.Distance or 30  
+        
+       
+        local function IsFirstPerson()
+            local playerPosition = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if playerPosition then
+                local cameraPosition = Camera.CFrame.Position
+                local distance = (cameraPosition - playerPosition.Position).Magnitude
+                return distance < FIRST_PERSON_THRESHOLD
+            end
+            return false
+        end
+        
+        
+        local function IsThirdPerson()
+            local playerPosition = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if playerPosition then
+                local cameraPosition = Camera.CFrame.Position
+                local distance = (cameraPosition - playerPosition.Position).Magnitude
+                return distance > THIRD_PERSON_THRESHOLD
+            end
+            return false
+        end
+        
+        local function UpdateFOV()
+        end
+        
+        RunService.RenderStepped:Connect(UpdateFOV)
+        
+        
+        local function ClosestPlrFromMouse()
+            local Target, Closest = nil, math.huge
+            local enabled = shared.Private.Main.Enabled
+            local whitelist = shared.Private.Main.Checks.Whitelist
+        
+            for _, player in pairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                    if enabled and table.find(whitelist, player.Name) then
+                        break
+                    end
+        
+                    local Position, OnScreen = Camera:WorldToScreenPoint(player.Character.HumanoidRootPart.Position)
+                    local Distance = (Vector2.new(Position.X, Position.Y) - Vector2.new(Mouse.X, Mouse.Y)).Magnitude
+                    Distance = Distance * DETECTION_SCALE
+        
+                    if Distance < Closest and OnScreen then
+                        Closest = Distance
+                        Target = player
+                    end
+                end
+            end
+            return Target
+        end
+        
+    
+        local function GetClosestBodyPart(character)
+            local ClosestDistance = math.huge
+            local BodyPart = nil
+        
+            if character and character:IsDescendantOf(game.Workspace) then
+                for _, part in ipairs(character:GetChildren()) do
+                    if part:IsA("BasePart") then
+                        local Position, OnScreen = Camera:WorldToScreenPoint(part.Position)
+                        if OnScreen then
+                            local Distance = (Vector2.new(Position.X, Position.Y) - Vector2.new(Mouse.X, Mouse.Y)).Magnitude
+                            if Distance < ClosestDistance then
+                                ClosestDistance = Distance
+                                BodyPart = part
+                            end
+                        end
+                    end
+                end
+            end
+            return BodyPart
+        end
+        
+       
+        local function IsTargetInRange(targetPlayer)
+            local playerPosition = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if playerPosition and targetPlayer and targetPlayer.Character then
+                local targetPosition = targetPlayer.Character.HumanoidRootPart.Position
+                local distance = (targetPosition - playerPosition.Position).Magnitude
+                return distance <= MAX_TARGET_DISTANCE
+            end
+            return false
+        end
+        
+        local function GetTarget()
+            return TargetPlayer
+        end
+        
+        Mouse.Button2Down:Connect(function()
+            if shared.Private.Camera.MouseButton2 then
+                isRightMouseButtonDown = true
+            end
+        end)
+        
+        Mouse.Button2Up:Connect(function()
+            isRightMouseButtonDown = false
+        end)
+        
+      
+        local function IsTargetVisible(targetPlayer, bodyPart)
+            if targetPlayer and bodyPart then
+                local ray = Ray.new(Camera.CFrame.Position, (bodyPart.Position - Camera.CFrame.Position).unit * 500)
+                local hitPart = workspace:FindPartOnRay(ray, LocalPlayer.Character)
+                
+                if hitPart and hitPart.Parent ~= targetPlayer.Character then
+                    return false
+                end
+            end
+            return true
+        end
+        
+        Mouse.KeyDown:Connect(function(Key)
+            local key = Key:lower()
+        
+            if key == shared.Private.Main.Keybind:lower() then
+                if shared.Private.Camera.Enabled then
+                    if IsTargeting then
+                        if TargetPlayer and TargetPlayer.Character and TargetPlayer.Character:FindFirstChildOfClass("Humanoid") then
+                            local humanoid = TargetPlayer.Character.Humanoid
+                            if humanoid.Health >= 1 and not IsPlayerKnockedOut(TargetPlayer) and not IsPlayerGrabbed(TargetPlayer) then
+                                if IsTargetInRange(TargetPlayer) then
+                                    if ClosestPlrFromMouse() ~= TargetPlayer then
+                                        local newTarget = ClosestPlrFromMouse()
+                                        if newTarget and newTarget.Character and newTarget.Character:FindFirstChildOfClass("Humanoid").Health >= 1 and not IsPlayerKnockedOut(newTarget) and not IsPlayerGrabbed(newTarget) then
+                                            TargetPlayer = newTarget
+                                        end
+                                    end
+                                else
+                                   
+                                    TargetPlayer = nil
+                                    IsTargeting = false
+                                end
+                            else
+                                TargetPlayer = nil
+                                IsTargeting = false
+                            end
+                        end
+                    else
+                        local initialTarget = ClosestPlrFromMouse()
+                        if initialTarget and initialTarget.Character and initialTarget.Character:FindFirstChildOfClass("Humanoid").Health >= 1 and not IsPlayerKnockedOut(initialTarget) and not IsPlayerGrabbed(initialTarget) then
+                            if IsTargetInRange(initialTarget) then
+                                IsTargeting = true
+                                TargetPlayer = initialTarget
+                            end
+                        end
+                    end
+                end
+            end
+        
+            if key == shared.Private.Main.Cancel:lower() then
+                IsTargeting = false
+                TargetPlayer = nil
+            end
+        end)
+        
+        local function IsPlayerKnockedOut(player)
+            return player and player.Character and player.Character:FindFirstChild("BodyEffects") and player.Character.BodyEffects["K.O"].Value == true
+        end
+        
+        local function IsPlayerGrabbed(player)
+            return player and player.Character and player.Character:FindFirstChild("GRABBING_CONSTRAINT") ~= nil
+        end
+        
+        local function IsAlignedWithCamera(targetPlayer)
+           if targetPlayer and targetPlayer.Character then
+               local targetPosition = targetPlayer.Character.HumanoidRootPart.Position
+               local cameraPosition = Camera.CFrame.Position
+               local direction = (targetPosition - cameraPosition).unit
+               local targetDirection = Camera.CFrame.LookVector.unit
+       
+            
+               local distance = (targetPosition - cameraPosition).Magnitude
+       
+             
+               local dotThreshold = 0.98  
+       
+               
+               if distance > 50 then  
+                   dotThreshold = 0.95  
+               end
+       
+               
+               return direction:Dot(targetDirection) > dotThreshold
+           end
+           return false
+       end
+       
+       
+        
+        local function GetDistanceFromMouse(bodyPart)
+            local mousePosition = game:GetService("Players").LocalPlayer:GetMouse().Hit.p
+            return (bodyPart.Position - mousePosition).Magnitude
+        end
+        
+        RunService.RenderStepped:Connect(function()
+            if IsTargeting and TargetPlayer and TargetPlayer.Character then
+                local humanoid = TargetPlayer.Character:FindFirstChildOfClass("Humanoid")
+                if not humanoid or humanoid.Health < 1 or IsPlayerKnockedOut(TargetPlayer) or IsPlayerGrabbed(TargetPlayer) then
+                    TargetPlayer = nil
+                    IsTargeting = false
+                    return
+                end
+                
+                if shared.Private.Camera.Enabled then
+                    if shared.Private.Camera.Configurations.Value == 0 then
+                        return
+                    end
+        
+                    if shared.Private.Camera.MouseButton2 then
+                        if isRightMouseButtonDown then
+                            if shared.Private.Camera.Configurations.ThirdPerson == false then
+                                if IsFirstPerson() then
+                                    if IsAlignedWithCamera(TargetPlayer) then
+                                        local head = TargetPlayer.Character:FindFirstChild("Head")
+                                        local lowerTorso = TargetPlayer.Character:FindFirstChild("LowerTorso")
+                                        local bodyPart = nil
+        
+                                        if head and lowerTorso then
+                                            local distanceToHead = GetDistanceFromMouse(head)
+                                            local distanceToLowerTorso = GetDistanceFromMouse(lowerTorso)
+        
+                                            if distanceToHead < distanceToLowerTorso then
+                                                bodyPart = head
+                                            else
+                                                bodyPart = lowerTorso
+                                            end
+                                        elseif head then
+                                            bodyPart = head
+                                        elseif lowerTorso then
+                                            bodyPart = lowerTorso
+                                        end
+        
+                                        if bodyPart and IsTargetVisible(TargetPlayer, bodyPart) then
+                                            local targetPosition = bodyPart.Position
+                                            local playerPosition = TargetPlayer.Character.HumanoidRootPart.Position
+                                            local distanceToTarget = (targetPosition - playerPosition).Magnitude
+                                            
+                                            if distanceToTarget <= math.sqrt(FOV.X^2 + FOV.Y^2 + FOV.Z^2) then
+                                                local predictedPosition
+                                                
+                                                if shared.Private.Camera.Resolver then
+                                                    local humanoid = TargetPlayer.Character:FindFirstChildOfClass("Humanoid")
+                                                    if humanoid then
+                                                        local moveDirection = humanoid.MoveDirection
+                                                        predictedPosition = bodyPart.Position + (moveDirection * Vector3.new(
+                                                            shared.Private.Camera.Prediction.X,
+                                                            shared.Private.Camera.Prediction.Y,
+                                                            shared.Private.Camera.Prediction.Z
+                                                        ))
+                                                    end
+                                                else
+                                                    local targetVelocity = TargetPlayer.Character.HumanoidRootPart.Velocity
+                                                    predictedPosition = bodyPart.Position + (targetVelocity * Vector3.new(
+                                                        shared.Private.Camera.Prediction.X,
+                                                        shared.Private.Camera.Prediction.Y,
+                                                        shared.Private.Camera.Prediction.Z
+                                                    ))
+                                                end
+        
+                                                if shared.Private.Camera.Configurations.Value ~= 0 then
+                                                    if predictedPosition then
+                                                        local currentPosition = Camera.CFrame.Position
+                                                        local randomness = math.random(95, 105) / 100
+                                                        local smoothFactor = shared.Private.Camera.Configurations.Value * randomness
+        
+                                                        local DesiredCFrame = CFrame.new(currentPosition, predictedPosition)
+                                                        Camera.CFrame = Camera.CFrame:Lerp(DesiredCFrame, smoothFactor)
+                                                    end
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    else
+                        if shared.Private.Camera.Configurations.ThirdPerson == false then
+                            if IsFirstPerson() then
+                                if IsAlignedWithCamera(TargetPlayer) then
+                                    local head = TargetPlayer.Character:FindFirstChild("Head")
+                                    local lowerTorso = TargetPlayer.Character:FindFirstChild("LowerTorso")
+                                    local bodyPart = nil
+        
+                                    if head and lowerTorso then
+                                        local distanceToHead = GetDistanceFromMouse(head)
+                                        local distanceToLowerTorso = GetDistanceFromMouse(lowerTorso)
+        
+                                        if distanceToHead < distanceToLowerTorso then
+                                            bodyPart = head
+                                        else
+                                            bodyPart = lowerTorso
+                                        end
+                                    elseif head then
+                                        bodyPart = head
+                                    elseif lowerTorso then
+                                        bodyPart = lowerTorso
+                                    end
+        
+                                    if bodyPart and IsTargetVisible(TargetPlayer, bodyPart) then
+                                        local targetPosition = bodyPart.Position
+                                        local playerPosition = TargetPlayer.Character.HumanoidRootPart.Position
+                                        local distanceToTarget = (targetPosition - playerPosition).Magnitude
+        
+                                        if distanceToTarget <= math.sqrt(FOV.X^2 + FOV.Y^2 + FOV.Z^2) then
+                                            local predictedPosition
+        
+                                            if shared.Private.Camera.Resolver then
+                                                local humanoid = TargetPlayer.Character:FindFirstChildOfClass("Humanoid")
+                                                if humanoid then
+                                                    local moveDirection = humanoid.MoveDirection
+                                                    predictedPosition = bodyPart.Position + (moveDirection * Vector3.new(
+                                                        shared.Private.Camera.Prediction.X,
+                                                        shared.Private.Camera.Prediction.Y,
+                                                        shared.Private.Camera.Prediction.Z
+                                                    ))
+                                                end
+                                            else
+                                                local targetVelocity = TargetPlayer.Character.HumanoidRootPart.Velocity
+                                                predictedPosition = bodyPart.Position + (targetVelocity * Vector3.new(
+                                                    shared.Private.Camera.Prediction.X,
+                                                    shared.Private.Camera.Prediction.Y,
+                                                    shared.Private.Camera.Prediction.Z
+                                                ))
+                                            end
+        
+                                            if shared.Private.Camera.Configurations.Value ~= 0 then
+                                               if predictedPosition then
+                                                   local currentPosition = Camera.CFrame.Position
+                                                   local randomness = math.random(95, 105) / 100
+                                                  
+                                                   local smoothFactor = (shared.Private.Camera.Configurations.Value * randomness) * 0.1  
+                                           
+                                                   local DesiredCFrame = CFrame.new(currentPosition, predictedPosition)
+                                                   Camera.CFrame = Camera.CFrame:Lerp(DesiredCFrame, smoothFactor)
+                                               end
+                                           end 
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+        
+        
+       
+       
+       
+       
+
+
+
+        UserInputService.InputEnded:Connect(function(input, isProcessed)
+            if input.KeyCode == Enum.KeyCode[shared.Private.Main.Keybind:upper()] and shared.Private.Camera.Method == "hold" then  -- Updated to Keybind
+                holdingMouseButton = false
+            end
+        end)
+
+
+
+
+
+
+            hasPrinted = true  
+        end
+    end
+end
+
+
+local function listenForGuiChanges()
+   
+    for _, guiElement in ipairs(playerGui:GetDescendants()) do
+        if guiElement:IsA("GuiObject") then
+            
+            guiElement.Changed:Connect(function(property)
+                if property == "Visible" then
+                    onGuiElementVisible(guiElement)
+                end
+            end)
+        end
+    end
+end
+
+
+listenForGuiChanges()
